@@ -1,1 +1,243 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tetris Deluxe</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #f4f4f4; text-align: center; }
+    .screen { display: none; padding: 20px; }
+    .active { display: block; }
+    .btn { padding: 15px 25px; border: none; border-radius: 12px; font-size: 18px; margin: 10px; cursor: pointer; }
+    .classic { background: #4caf50; color: white; }
+    .blast { background: #ff9800; color: white; }
+    .shopbtn { background: #2196f3; color: white; }
+    .skin-option { display: inline-block; margin: 10px; border: 2px solid #ccc; border-radius: 10px; }
+    .skin-option img { width: 64px; height: 64px; display: block; }
+    .coin-counter { font-size: 20px; margin: 10px; }
+    canvas { background: #ddd; border-radius: 10px; margin: 20px auto; display: block; }
+  </style>
+</head>
+<body>
+  <div id="menu" class="screen active">
+    <h1>Tetris Deluxe</h1>
+    <button class="btn classic" onclick="startGame('classic')">Классика</button>
+    <button class="btn blast" onclick="startGame('blast')">Block Blast</button>
+    <button class="btn shopbtn" onclick="openShop()">Магазин</button>
+  </div>
 
+  <div id="shop" class="screen">
+    <h2>Магазин</h2>
+    <div class="coin-counter">Монеты: <span id="coins">0</span></div>
+    <div class="skin-option" onclick="buySkin('wood', 50)">
+      <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACt...">
+      <div>Дерево — 50</div>
+    </div>
+    <div class="skin-option" onclick="buySkin('gold', 100)">
+      <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQE...">
+      <div>Золото — 100</div>
+    </div>
+    <div class="skin-option" onclick="buySkin('diamond', 150)">
+      <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ...">
+      <div>Алмаз — 150</div>
+    </div>
+    <br>
+    <button class="btn" onclick="goHome()">Назад</button>
+  </div>
+
+  <div id="game" class="screen">
+    <canvas id="gameCanvas" width="300" height="600"></canvas>
+    <div class="coin-counter">Монеты: <span id="gameCoins">0</span></div>
+    <button class="btn" onclick="endGame()">В меню</button>
+  </div>
+
+  <script>
+    let coins = parseInt(localStorage.getItem('coins') || '0');
+    let selectedSkin = localStorage.getItem('skin') || 'default';
+
+    const skinTextures = {
+      wood: '#8B4513',
+      gold: '#FFD700',
+      diamond: '#00FFFF',
+      default: '#666'
+    };
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const blockSize = 30;
+    const rows = 20;
+    const cols = 10;
+    let board = [];
+    let current;
+    let dropInterval = 800;
+    let dropCounter = 0;
+    let lastTime = 0;
+
+    const tetrominoes = {
+      I: [[1, 1, 1, 1]],
+      O: [[1, 1], [1, 1]],
+      T: [[0, 1, 0], [1, 1, 1]],
+      S: [[0, 1, 1], [1, 1, 0]],
+      Z: [[1, 1, 0], [0, 1, 1]],
+      J: [[1, 0, 0], [1, 1, 1]],
+      L: [[0, 0, 1], [1, 1, 1]]
+    };
+
+    function createPiece(type) {
+      return {
+        matrix: tetrominoes[type],
+        pos: {x: Math.floor(cols / 2) - 1, y: 0}
+      };
+    }
+
+    function resetBoard() {
+      board = Array.from({length: rows}, () => Array(cols).fill(0));
+    }
+
+    function drawMatrix(matrix, offset) {
+      ctx.fillStyle = skinTextures[selectedSkin];
+      matrix.forEach((row, y) => {
+        row.forEach((val, x) => {
+          if (val) {
+            ctx.fillRect((x + offset.x) * blockSize, (y + offset.y) * blockSize, blockSize - 2, blockSize - 2);
+          }
+        });
+      });
+    }
+
+    function drawBoard() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      board.forEach((row, y) => {
+        row.forEach((val, x) => {
+          if (val) {
+            ctx.fillStyle = skinTextures[selectedSkin];
+            ctx.fillRect(x * blockSize, y * blockSize, blockSize - 2, blockSize - 2);
+          }
+        });
+      });
+    }
+
+    function mergePiece() {
+      current.matrix.forEach((row, y) => {
+        row.forEach((val, x) => {
+          if (val) {
+            board[y + current.pos.y][x + current.pos.x] = 1;
+          }
+        });
+      });
+    }
+
+    function collide() {
+      const m = current.matrix;
+      const o = current.pos;
+      for (let y = 0; y < m.length; y++) {
+        for (let x = 0; x < m[y].length; x++) {
+          if (m[y][x] && (board[y + o.y] && board[y + o.y][x + o.x]) !== 0) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function rotate(matrix) {
+      return matrix[0].map((_, i) => matrix.map(row => row[i]).reverse());
+    }
+
+    function drop() {
+      current.pos.y++;
+      if (collide()) {
+        current.pos.y--;
+        mergePiece();
+        removeLines();
+        current = createPiece(randomType());
+      }
+      dropCounter = 0;
+    }
+
+    function removeLines() {
+      outer: for (let y = rows - 1; y >= 0; y--) {
+        for (let x = 0; x < cols; x++) {
+          if (!board[y][x]) continue outer;
+        }
+        board.splice(y, 1);
+        board.unshift(Array(cols).fill(0));
+        coins += 10;
+        localStorage.setItem('coins', coins);
+        updateCoins();
+        y++;
+      }
+    }
+
+    function update(time = 0) {
+      const delta = time - lastTime;
+      lastTime = time;
+      dropCounter += delta;
+      if (dropCounter > dropInterval) drop();
+      drawBoard();
+      drawMatrix(current.matrix, current.pos);
+      requestAnimationFrame(update);
+    }
+
+    function randomType() {
+      const types = 'IOTSZJL';
+      return types[Math.floor(Math.random() * types.length)];
+    }
+
+    function startGame(mode) {
+      document.getElementById('menu').classList.remove('active');
+      document.getElementById('game').classList.add('active');
+      resetBoard();
+      current = createPiece(randomType());
+      updateCoins();
+      update();
+    }
+
+    function openShop() {
+      document.getElementById('menu').classList.remove('active');
+      document.getElementById('shop').classList.add('active');
+      updateCoins();
+    }
+
+    function goHome() {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.getElementById('menu').classList.add('active');
+    }
+
+    function endGame() {
+      goHome();
+    }
+
+    function buySkin(name, cost) {
+      if (coins >= cost) {
+        coins -= cost;
+        selectedSkin = name;
+        localStorage.setItem('coins', coins);
+        localStorage.setItem('skin', name);
+        updateCoins();
+        alert('Выбран скин: ' + name);
+      } else {
+        alert('Недостаточно монет!');
+      }
+    }
+
+    function updateCoins() {
+      document.getElementById('coins').innerText = coins;
+      document.getElementById('gameCoins').innerText = coins;
+    }
+
+    document.addEventListener('keydown', e => {
+      if (!current) return;
+      if (e.key === 'ArrowLeft') current.pos.x--;
+      if (e.key === 'ArrowRight') current.pos.x++;
+      if (e.key === 'ArrowDown') drop();
+      if (e.key === 'ArrowUp') {
+        current.matrix = rotate(current.matrix);
+      }
+      if (collide()) current.pos.x++;
+    });
+
+    updateCoins();
+  </script>
+</body>
+</html>
